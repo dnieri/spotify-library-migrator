@@ -1,0 +1,8 @@
+.env
+.spotify_token_cache
+.spotify_token_cache_import
+import_failures.txt
+exports/
+data/
+__pycache__/
+.claude/
