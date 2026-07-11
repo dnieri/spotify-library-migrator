@@ -20,22 +20,38 @@ Como o CSV do TuneMyMusic já traz o **ID do Spotify** de cada item, a importaç
 3. Se a conta de destino for diferente da dona do app, adicione o e-mail dela em **Settings → User Management**.
 4. Copie o **Client ID** e o **Client Secret**.
 
-## Passo 3 — Configurar e rodar
+## Passo 3 — Rodar
 
 ```bash
-# 1. Instale as dependências
 pip install -r requirements.txt
-
-# 2. Crie o .env com suas credenciais
-cp .env.example .env   # e preencha com Client ID/Secret
-
-# 3. Rode a importação
 python spotify_import.py
 ```
 
-- Uma **janela do Explorador de Arquivos** abre para você escolher o CSV (ou passe o caminho direto: `python spotify_import.py "My Spotify Library.csv"`).
+**Na primeira execução**, um assistente (wizard) pede o Client ID/Secret e **cria o `.env` automaticamente** — não precisa editar arquivo na mão. Nas execuções seguintes, abre um menu interativo:
+
+```
+=== Spotify Library Migrator ===
+Conta conectada: Fulano (id: ...)
+
+  1. Importar biblioteca (CSV do TuneMyMusic)
+  2. Exportar biblioteca da conta conectada (.txt)
+  3. Conectar / trocar conta
+  4. Alterar chaves da API (.env)
+  0. Sair
+```
+
+- Na importação, uma **janela do Explorador de Arquivos** abre para você escolher o CSV.
 - O navegador abre para você autorizar o acesso — **entre com a conta de destino** (a nova).
-- O script mostra qual conta está logada e pede confirmação antes de importar (use `--yes` para pular, e `--whoami` para só conferir a conta).
+- O script mostra qual conta está conectada e pede confirmação antes de importar.
+
+Também dá para usar direto pela linha de comando, sem menu:
+
+```bash
+python spotify_import.py "My Spotify Library.csv" --yes   # importa sem perguntar
+python spotify_import.py --whoami                          # só mostra a conta conectada
+```
+
+Se preferir configurar manualmente, copie `.env.example` para `.env` e preencha.
 
 ## O que é importado
 
@@ -50,7 +66,7 @@ Proteções: re-executar não duplica nada (curtidas são idempotentes e playlis
 
 ## Extra: exportar via API (sem TuneMyMusic)
 
-O repositório também inclui `spotify_export.py`, que gera arquivos `.txt` (`Artista - Música`) das curtidas e playlists direto pela API — úteis para importar em outros serviços que aceitam texto.
+A opção 2 do menu (ou o script `spotify_export.py`) gera arquivos `.txt` (`Artista - Música`) das curtidas e playlists direto pela API — úteis para importar em outros serviços que aceitam texto.
 
 ## Notas técnicas
 
