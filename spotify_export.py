@@ -1,45 +1,21 @@
 """
-Exporta as musicas curtidas e as playlists de uma conta Spotify para arquivos .txt,
-no formato "Artista - Musica" (um arquivo por playlist), prontos para importar
-em outra conta de streaming usando o TuneMyMusic (opcao de importacao por arquivo/CSV/TXT).
+Exporta a biblioteca de uma conta Spotify para arquivos .txt no formato
+"Artista - Musica" (um arquivo por playlist + um para as curtidas) - util para
+importar em servicos que aceitam texto, como o TuneMyMusic (origem "File").
 
-Configuracao necessaria (uma vez):
-1. Crie um app em https://developer.spotify.com/dashboard
-2. Adicione uma Redirect URI no app, por exemplo: http://127.0.0.1:8888/callback
-3. Preencha o arquivo .env (na mesma pasta deste script) com suas credenciais:
-     SPOTIPY_CLIENT_ID=seu_client_id
-     SPOTIPY_CLIENT_SECRET=seu_client_secret
-     SPOTIPY_REDIRECT_URI=http://127.0.0.1:8888/callback
-4. Instale as dependencias: pip install -r requirements.txt
-5. Rode: python spotify_export.py
+Os arquivos ficam em exports/<nome da conta>/.
 
-Na primeira execucao vai abrir o navegador para voce autorizar o acesso a sua conta.
+Rode pelo menu do app (python spotify_import.py, opcao 3) ou direto:
+    python spotify_export.py
 """
 
 import os
 import re
-import sys
 
 import spotipy
-from dotenv import load_dotenv
-from spotipy.oauth2 import SpotifyOAuth
-
-SCOPE = "user-library-read playlist-read-private playlist-read-collaborative"
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 
 
-def get_client():
-    load_dotenv()
-
-    required = ["SPOTIPY_CLIENT_ID", "SPOTIPY_CLIENT_SECRET", "SPOTIPY_REDIRECT_URI"]
-    missing = [name for name in required if not os.environ.get(name)]
-    if missing:
-        print("Faltam variaveis no arquivo .env: " + ", ".join(missing))
-        print("Veja as instrucoes no topo de spotify_export.py.")
-        sys.exit(1)
-
-    auth_manager = SpotifyOAuth(scope=SCOPE, cache_path=".spotify_token_cache")
-    return spotipy.Spotify(auth_manager=auth_manager)
+EXPORTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "exports")
 
 
 def sanitize_filename(name):
@@ -47,95 +23,63 @@ def sanitize_filename(name):
     return name or "sem_nome"
 
 
-def track_line(track):
-    if track is None:
+def track_line(node):
+    if not node:
         return None
-    artists = ", ".join(a["name"] for a in track.get("artists", []) if a.get("name"))
-    title = track.get("name")
+    artists = ", ".join(a["name"] for a in node.get("artists", []) if a.get("name"))
+    title = node.get("name")
     if not artists or not title:
         return None
     return f"{artists} - {title}"
 
 
-def write_lines(filename, lines):
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    path = os.path.join(OUTPUT_DIR, filename)
+def write_lines(out_dir, filename, lines):
+    os.makedirs(out_dir, exist_ok=True)
+    path = os.path.join(out_dir, filename)
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(lines))
     print(f"  -> {len(lines)} musicas salvas em {path}")
 
 
-def export_liked_songs(sp):
+def export_liked_songs(sp, out_dir):
+    from spotify_import import paginate
+
     print("Exportando musicas curtidas...")
     lines = []
-    offset = 0
-    while True:
-        page = sp.current_user_saved_tracks(limit=50, offset=offset)
-        items = page.get("items", [])
-        if not items:
-            break
-        for item in items:
-            line = track_line(item.get("track"))
-            if line:
-                lines.append(line)
-        offset += len(items)
-        if page.get("next") is None:
-            break
-    write_lines("Liked Songs.txt", lines)
+    for item in paginate(lambda o: sp.current_user_saved_tracks(limit=50, offset=o)):
+        line = track_line(item.get("track") or item.get("item"))
+        if line:
+            lines.append(line)
+    write_lines(out_dir, "Liked Songs.txt", lines)
 
 
-def export_playlists(sp):
+def export_playlists(sp, out_dir):
+    from spotify_import import paginate, playlist_item_node
+
     print("Exportando playlists...")
-    offset = 0
-    while True:
-        page = sp.current_user_playlists(limit=50, offset=offset)
-        playlists = page.get("items", [])
-        if not playlists:
-            break
-        for playlist in playlists:
-            export_single_playlist(sp, playlist)
-        offset += len(playlists)
-        if page.get("next") is None:
-            break
+    for playlist in list(paginate(lambda o: sp.current_user_playlists(limit=50, offset=o))):
+        print(f"  Playlist: {playlist['name']}")
+        lines = []
+        try:
+            for item in paginate(lambda o: sp.playlist_items(
+                    playlist["id"], limit=100, offset=o, additional_types=["track"])):
+                line = track_line(playlist_item_node(item))
+                if line:
+                    lines.append(line)
+        except spotipy.SpotifyException as e:
+            # playlists editoriais do Spotify nao sao legiveis por apps em dev mode
+            print(f"  (pulada: a API nao permite ler esta playlist - HTTP {e.http_status})")
+            continue
+        write_lines(out_dir, f"{sanitize_filename(playlist['name'])}.txt", lines)
 
 
-def export_single_playlist(sp, playlist):
-    name = playlist.get("name", "Playlist")
-    playlist_id = playlist["id"]
-    print(f"  Playlist: {name}")
-
-    lines = []
-    offset = 0
-    while True:
-        page = sp.playlist_items(
-            playlist_id,
-            limit=100,
-            offset=offset,
-            fields="items(track(name,artists(name))),next",
-            additional_types=["track"],
-        )
-        items = page.get("items", [])
-        if not items:
-            break
-        for item in items:
-            line = track_line(item.get("track"))
-            if line:
-                lines.append(line)
-        offset += len(items)
-        if page.get("next") is None:
-            break
-
-    filename = f"{sanitize_filename(name)}.txt"
-    write_lines(filename, lines)
-
-
-def main():
-    sp = get_client()
-    export_liked_songs(sp)
-    export_playlists(sp)
-    print(f"\nConcluido. Arquivos gerados em: {OUTPUT_DIR}")
-    print("Agora importe cada .txt no TuneMyMusic escolhendo a origem 'File'.")
+def export_all(sp, account_label):
+    out_dir = os.path.join(EXPORTS_DIR, sanitize_filename(account_label))
+    export_liked_songs(sp, out_dir)
+    export_playlists(sp, out_dir)
+    print(f"\nArquivos gerados em: {out_dir}")
 
 
 if __name__ == "__main__":
-    main()
+    from spotify_import import bootstrap_cli, run_export
+    bootstrap_cli(run_export)
